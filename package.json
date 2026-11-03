@@ -1,0 +1,19 @@
+{
+  "name": "healthlink-sender",
+  "version": "0.1.0",
+  "description": "Bridges VascIQ to the HealthLink HMS client: accepts HL7 ORU messages over HTTPS, writes them to HL7_out, watches HL7_in for ACKs and reports them back to VascIQ.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --no-warnings=ExperimentalWarning --env-file=.env src/index.js",
+    "dev": "node --no-warnings=ExperimentalWarning --env-file=.env --watch src/index.js",
+    "test": "node --no-warnings=ExperimentalWarning --test \"test/**/*.test.js\"",
+    "fake-ack": "node --env-file=.env scripts/fake-ack.js"
+  },
+  "dependencies": {
+    "nodemailer": "^7.0.0"
+  }
+}
