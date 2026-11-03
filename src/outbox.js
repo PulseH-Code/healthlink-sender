@@ -19,7 +19,8 @@ export function validControlId(id) {
  */
 export async function writeMessage({ hl7Out, staging }, controlId, message) {
   if (!validControlId(controlId)) throw new Error("Invalid control id");
-  await fsp.mkdir(hl7Out, { recursive: true });
+  // HL7_out\<TYPE> belongs to the HMS client; it must already exist.
+  await fsp.access(hl7Out);
   await fsp.mkdir(staging, { recursive: true });
 
   const filename = `${controlId}.hl7`;

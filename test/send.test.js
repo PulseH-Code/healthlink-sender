@@ -16,9 +16,10 @@ test("/send writes the exact bytes it received to HL7_out via atomic rename", as
     assert.equal(written[written.length - 1], 0x0d, "file ends with CR");
     assert.ok(!written.includes(0x0a), "no LF in file");
 
-    // Nothing left behind in staging; nothing else in HL7_out.
+    // Nothing left behind in staging; nothing else in HL7_out\<TYPE>
+    // besides the client's own rejected/ folder.
     assert.deepEqual(fs.readdirSync(h.config.staging), []);
-    assert.deepEqual(fs.readdirSync(h.hl7Out), ["000001.hl7"]);
+    assert.deepEqual(fs.readdirSync(h.hl7Out).sort(), ["000001.hl7", "rejected"]);
 
     const row = h.db.getMessage("000001");
     assert.equal(row.destination, "ccdhb");
@@ -52,7 +53,7 @@ test("/send rejects a missing or wrong API key and bad bodies", async () => {
     assert.equal((await h.send({ controlId: "../evil", destination: "ccdhb", message: SAMPLE_ORU })).status, 400);
     assert.equal((await h.send({ controlId: "3", destination: "", message: SAMPLE_ORU })).status, 400);
     assert.equal((await h.send({ controlId: "3", destination: "ccdhb", message: "hello" })).status, 400);
-    assert.deepEqual(fs.readdirSync(h.hl7Out), []);
+    assert.deepEqual(fs.readdirSync(h.hl7Out), ["rejected"]);
   } finally {
     await h.close();
   }

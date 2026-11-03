@@ -24,15 +24,33 @@ export function loadConfig(env = process.env, cwd = process.cwd()) {
     throw new Error(`Missing required environment variables: ${missing.join(", ")}`);
   }
 
+  // The HMS client keeps one folder per message type:
+  //   HL7_out\<TYPE>            processDir        — we write here
+  //   HL7_out\<TYPE>\rejected   processErrorDir   — files it refused to send
+  //   HL7_in\<TYPE>             deprocessDir / deprocessAckDir — ACKs land here
+  //   HL7_in\<TYPE>\rejected    deprocessErrorDir — inbound it could not read
+  // Our own staging and archive folders sit beside the client's tree, never
+  // inside the folders it watches. Default: <HLINK>\vasciq-staging and
+  // <HLINK>\vasciq-archive when HL7_OUT_PATH is <HLINK>\HL7_out\<TYPE>.
   const hl7Out = path.resolve(cwd, env.HL7_OUT_PATH);
   const hl7In = path.resolve(cwd, env.HL7_IN_PATH);
+  const hmsRoot = path.dirname(path.dirname(hl7Out));
 
   return {
     hl7Out,
     hl7In,
+    hl7OutRejected: env.HL7_OUT_REJECTED_PATH
+      ? path.resolve(cwd, env.HL7_OUT_REJECTED_PATH)
+      : path.join(hl7Out, "rejected"),
+    hl7InRejected: env.HL7_IN_REJECTED_PATH
+      ? path.resolve(cwd, env.HL7_IN_REJECTED_PATH)
+      : path.join(hl7In, "rejected"),
     staging: env.STAGING_PATH
       ? path.resolve(cwd, env.STAGING_PATH)
-      : path.join(path.dirname(hl7Out), "hl7-staging"),
+      : path.join(hmsRoot, "vasciq-staging"),
+    archive: env.ARCHIVE_PATH
+      ? path.resolve(cwd, env.ARCHIVE_PATH)
+      : path.join(hmsRoot, "vasciq-archive"),
     apiKey: env.API_KEY.trim(),
     webhookUrl: env.VASCIQ_WEBHOOK_URL.trim(),
     webhookSecret: env.VASCIQ_WEBHOOK_SECRET.trim(),

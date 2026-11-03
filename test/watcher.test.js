@@ -29,12 +29,13 @@ test("matches an AA ACK and an AE ACK to their control ids and calls the webhook
     assert.equal(status.body.ackText, "PID-3 unknown NHI");
     assert.ok(status.body.reportedToVascIQ);
 
-    // Files moved to processed/<date>/, nothing deleted, HL7_in empty.
-    const processed = path.join(h.hl7In, "processed");
+    // Files archived under processed/<date>/ outside the client's tree,
+    // nothing deleted, HL7_in\<TYPE> left with only the client's rejected/.
+    const processed = path.join(h.archive, "processed");
     const dateDirs = fs.readdirSync(processed);
     assert.equal(dateDirs.length, 1);
     assert.deepEqual(fs.readdirSync(path.join(processed, dateDirs[0])).sort(), ["ack-a.hl7", "ack-b.hl7"]);
-    assert.deepEqual(fs.readdirSync(h.hl7In).filter((n) => n !== "processed"), []);
+    assert.deepEqual(fs.readdirSync(h.hl7In), ["rejected"]);
   } finally {
     await h.close();
   }
@@ -52,7 +53,37 @@ test("ignores and files away non-ACK messages and ACKs for unknown ids", async (
     assert.equal(summary.acks, 0);
     assert.equal(summary.other, 3);
     assert.equal(h.webhookCalls.length, 0);
-    assert.deepEqual(fs.readdirSync(path.join(h.hl7In, "other")).sort(), ["broadcast.hl7", "notes.txt", "stray-ack.hl7"]);
+    assert.deepEqual(fs.readdirSync(path.join(h.archive, "other")).sort(), ["broadcast.hl7", "notes.txt", "stray-ack.hl7"]);
+  } finally {
+    await h.close();
+  }
+});
+
+test("reports a message the HMS client refused to send as AR", async () => {
+  const h = await makeHarness();
+  try {
+    await h.send({ controlId: "000015", destination: "ccdhb", message: SAMPLE_ORU, testMode: true });
+    h.rejectOutbound("000015.hl7");
+    h.dropInbound("garbled.hl7", "not hl7 at all", path.join(h.hl7In, "rejected"));
+
+    const summary = await h.watcher.processOnce();
+    assert.equal(summary.rejected, 1);
+    assert.equal(summary.other, 1);
+
+    assert.equal(h.webhookCalls.length, 1);
+    assert.equal(h.webhookCalls[0].body.controlId, "000015");
+    assert.equal(h.webhookCalls[0].body.ackCode, "AR");
+    assert.match(h.webhookCalls[0].body.ackText, /HealthLink client/);
+
+    const status = await h.get("/status/000015");
+    assert.equal(status.body.ackCode, "AR");
+
+    // Both archived; the client's rejected folders are empty again.
+    assert.deepEqual(fs.readdirSync(path.join(h.hl7Out, "rejected")), []);
+    assert.deepEqual(fs.readdirSync(path.join(h.hl7In, "rejected")), []);
+    const rejected = path.join(h.archive, "rejected");
+    assert.deepEqual(fs.readdirSync(path.join(rejected, fs.readdirSync(rejected)[0])), ["000015.hl7"]);
+    assert.deepEqual(fs.readdirSync(path.join(h.archive, "other")), ["garbled.hl7"]);
   } finally {
     await h.close();
   }
@@ -63,7 +94,7 @@ test("skips files still being written and leaves subfolders alone", async () => 
   try {
     await h.send({ controlId: "000020", destination: "ccdhb", message: SAMPLE_ORU, testMode: true });
     fs.writeFileSync(path.join(h.hl7In, "fresh.hl7"), ackFor("000020")); // mtime = now
-    fs.mkdirSync(path.join(h.hl7In, "archive"));
+    fs.mkdirSync(path.join(h.hl7In, "archive")); // some folder of the client's we must not touch
 
     const first = await h.watcher.processOnce();
     assert.equal(first.files, 0, "fresh file not touched yet");

@@ -11,11 +11,12 @@ import { createServer } from "../src/http.js";
 
 /** Fake HMS folders in a temp dir, an in-memory DB, and a fake VascIQ webhook. */
 export async function makeHarness(overrides = {}) {
+  // Mirrors the real HMS layout: <HLINK>\HL7_out\<TYPE>\rejected etc.
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "hl-sender-"));
-  const hl7Out = path.join(root, "HL7_out");
-  const hl7In = path.join(root, "HL7_in");
-  fs.mkdirSync(hl7Out);
-  fs.mkdirSync(hl7In);
+  const hl7Out = path.join(root, "HL7_out", "RSDNZ");
+  const hl7In = path.join(root, "HL7_in", "RSDNZ");
+  fs.mkdirSync(path.join(hl7Out, "rejected"), { recursive: true });
+  fs.mkdirSync(path.join(hl7In, "rejected"), { recursive: true });
 
   // Fake VascIQ: records every webhook call, answers with a scripted status.
   const webhookCalls = [];
@@ -34,7 +35,10 @@ export async function makeHarness(overrides = {}) {
   const config = {
     hl7Out,
     hl7In,
-    staging: path.join(root, "hl7-staging"),
+    hl7OutRejected: path.join(hl7Out, "rejected"),
+    hl7InRejected: path.join(hl7In, "rejected"),
+    staging: path.join(root, "vasciq-staging"),
+    archive: path.join(root, "vasciq-archive"),
     apiKey: "test-api-key",
     webhookUrl: `http://127.0.0.1:${fakeVascIQ.address().port}/api/delivery/ack`,
     webhookSecret: "test-webhook-secret",
@@ -64,6 +68,7 @@ export async function makeHarness(overrides = {}) {
     root,
     hl7Out,
     hl7In,
+    archive: config.archive,
     config,
     db,
     webhook,
@@ -86,12 +91,20 @@ export async function makeHarness(overrides = {}) {
       return { status: res.status, body: await res.json() };
     },
     /** Write a file into HL7_in with an old mtime so the watcher treats it as settled. */
-    dropInbound(name, text) {
-      const file = path.join(hl7In, name);
+    dropInbound(name, text, dir = hl7In) {
+      const file = path.join(dir, name);
       fs.writeFileSync(file, text);
       const old = new Date(Date.now() - 10_000);
       fs.utimesSync(file, old, old);
       return file;
+    },
+    /** Simulate the HMS client refusing an outbound file: move it to HL7_out\<TYPE>\rejected. */
+    rejectOutbound(filename) {
+      const target = path.join(hl7Out, "rejected", filename);
+      fs.renameSync(path.join(hl7Out, filename), target);
+      const old = new Date(Date.now() - 10_000);
+      fs.utimesSync(target, old, old);
+      return target;
     },
     async close() {
       watcher.stop();

@@ -26,7 +26,10 @@ async function main() {
     alerts: config.alertEmail ? (config.smtp ? "email" : "log only (no SMTP)") : "off",
   });
 
-  for (const dir of [config.hl7Out, config.hl7In, config.staging]) {
+  // Our own folders only. The HMS client owns HL7_out\<TYPE> and
+  // HL7_in\<TYPE>; if they are missing the config points at the wrong
+  // message type and /health says so rather than us inventing folders.
+  for (const dir of [config.staging, config.archive]) {
     fs.mkdirSync(dir, { recursive: true });
   }
 

@@ -11,22 +11,47 @@ VascIQ ──POST /send──▶ sender ──writes──▶ HL7_out ──HMS 
 VascIQ ◀──POST /api/delivery/ack── sender ◀──watches── HL7_in ◀──HMS client──◀ ACK
 ```
 
+## How the HMS client is laid out
+
+The HealthLink client (v6.8, installed to `C:\HLINK`, configured by
+`hms_config.xml`) keeps **one folder per message type**, under the user's
+EDI. For an HL7 type called `<TYPE>`:
+
+| Folder | In the config | Meaning |
+|---|---|---|
+| `HL7_out\<TYPE>` | `processDir` | we drop messages here; the client collects them |
+| `HL7_out\<TYPE>\rejected` | `processErrorDir` | files the client refused to send |
+| `HL7_in\<TYPE>` | `deprocessDir` / `deprocessAckDir` | inbound messages **and ACKs** land here |
+| `HL7_in\<TYPE>\rejected` | `deprocessErrorDir` | inbound it could not read |
+
+`HL7_OUT_PATH` and `HL7_IN_PATH` must point at the `<TYPE>` folders, not the
+bare `HL7_out` / `HL7_in`. HealthLink tells us which message type our ORU
+results use and adds it to the config with the EDI; the folders then exist.
+Our own staging and archive folders live beside the client's tree
+(`C:\HLINK\vasciq-staging`, `C:\HLINK\vasciq-archive`), never inside the
+folders it watches.
+
 ## What it does
 
 - **`POST /send`** (header `x-api-key`): body `{ controlId, destination, message, testMode }`.
   Writes `message` byte-for-byte to `<HL7_out>/<controlId>.hl7` — written fully
-  to a staging folder first, then renamed in, so the HMS client never reads a
+  to the staging folder first, then renamed in, so the HMS client never reads a
   half-written file. Answers `202`. A repeat of the same `controlId` (VascIQ
   retrying after a lost reply) is accepted without rewriting.
 - **`GET /status/:controlId`** (header `x-api-key`): received / written / ACK
   code and text / whether VascIQ has been told.
 - **`GET /health`** (no auth): `ok`, whether `HL7_out` and `HL7_in` are
   reachable, how many files sit in each and how old they are.
-- **ACK watcher**, every 30 s over `HL7_in`: a file with an `MSA` segment whose
-  `MSA-2` matches a message we sent is recorded (`MSA-1` = AA / AE / AR, plus any
-  `MSA-3` / `ERR` text), reported to VascIQ, and moved to
-  `HL7_in/processed/YYYY-MM-DD/`. Anything else (test messages, broadcasts,
-  ACKs for unknown ids) is moved to `HL7_in/other/`. Nothing is ever deleted.
+- **ACK watcher**, every 30 s over `HL7_in\<TYPE>`: a file with an `MSA` segment
+  whose `MSA-2` matches a message we sent is recorded (`MSA-1` = AA / AE / AR,
+  plus any `MSA-3` / `ERR` text), reported to VascIQ, and archived under
+  `vasciq-archive\processed\YYYY-MM-DD\`. Anything else (test messages,
+  broadcasts, ACKs for unknown ids) goes to `vasciq-archive\other\`.
+- **Rejected-folder watcher**: a message the client moved to
+  `HL7_out\<TYPE>\rejected` will never be sent, so it is reported to VascIQ as
+  `AR` ("rejected by the HealthLink client") and archived under
+  `vasciq-archive\rejected\<date>\`. Files in `HL7_in\<TYPE>\rejected` are
+  logged and archived under `other\`. Nothing is ever deleted.
 - **Webhook to VascIQ** with the shared secret, retried with backoff (30 s
   doubling to 10 min) until VascIQ answers 2xx. A `400`/`404` from VascIQ means
   it does not know the message, so that report is logged and dropped.
@@ -53,9 +78,10 @@ VascIQ's `HEALTHLINK_SENDER_API_KEY`; `VASCIQ_WEBHOOK_SECRET` must equal its
 
 ### Local test with fake folders
 
-Point `HL7_OUT_PATH` and `HL7_IN_PATH` at any two empty folders, start the
-service, and put its URL in VascIQ → Settings → Hospital delivery. Sign a
-report with a hospital destination; `<HL7_out>/<controlId>.hl7` appears.
+Point `HL7_OUT_PATH` and `HL7_IN_PATH` at two empty folders laid out like the
+client's (for example `C:\hl-test\HL7_out\TEST` and `C:\hl-test\HL7_in\TEST`),
+start the service, and put its URL in VascIQ → Settings → Hospital delivery.
+Sign a report with a hospital destination; `<HL7_out>/<controlId>.hl7` appears.
 Then fake the hospital's answer:
 
 ```bash
@@ -85,9 +111,16 @@ database and a fake VascIQ webhook. No HealthLink needed.
 3. HTTPS: either a certificate on the box (`TLS_CERT_PATH` / `TLS_KEY_PATH`,
    `PORT=443`) or an Application Load Balancer terminating TLS in front of
    `PORT=8443` with `HOST=0.0.0.0` restricted to the ALB's security group.
-4. Install the HealthLink HMS client with the Pulse Ultrasound EDI. Note its
-   `HL7_out` / `HL7_in` folders (and whether it uses subfolders) and set them in
-   `.env`. The staging folder must be on the same drive as `HL7_out`.
+4. Install the HealthLink HMS client with the Pulse Ultrasound EDI. Open
+   `C:\HLINK\hms_config.xml`, find the `messageType` HealthLink added for our
+   ORU results, and put its `processDir` and `deprocessAckDir` into `.env`
+   as `HL7_OUT_PATH` / `HL7_IN_PATH`. Staging and archive default to
+   `C:\HLINK\vasciq-*` (same drive, required for the atomic rename).
+
+   Still to confirm with HealthLink: the message type name for ORU results;
+   whether `.hl7` is an acceptable file extension in `processDir`; whether the
+   client deletes collected files or moves them (affects the stuck-file
+   alert); and whether `pulsehnz` in the installed config is the Pulse EDI.
 5. Install as a service with [NSSM](https://nssm.cc) (run as Administrator):
 
    ```powershell
