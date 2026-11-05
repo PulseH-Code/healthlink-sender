@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $node = (Get-Command node).Source
-if (-not (Test-Path (Join-Path $root ".env"))) { throw ".env not found in $root — copy .env.example and fill it in first." }
+if (-not (Test-Path (Join-Path $root ".env"))) { throw ".env not found in $root - copy .env.example and fill it in first." }
 New-Item -ItemType Directory -Force (Join-Path $root "logs") | Out-Null
 
 & $Nssm install $ServiceName $node "--env-file=.env src\index.js"
